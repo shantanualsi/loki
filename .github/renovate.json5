@@ -105,6 +105,20 @@
       "matchPackageNames": ["github.com/twmb/franz-go/plugin/kprom"],
       "allowedVersions": "~1.2.0",
       "enabled": true
+    },
+    {
+      // Always use latest commits from specific repositories
+      "matchPackageNames": [
+        "github.com/prometheus/prometheus",
+        "github.com/prometheus/otlptranslator"
+      ],
+      "enabled": true,
+      "pinDigests": true,
+      "rangeStrategy": "replace",
+      "schedule": ["every 24 hours"],
+      "groupName": "latest-prometheus-deps",
+      "automerge": true,
+      "autoApprove": true
     }
   ],
   "digest": {
