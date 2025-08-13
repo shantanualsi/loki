@@ -115,7 +115,7 @@
       "enabled": true,
       "pinDigests": true,
       "rangeStrategy": "replace",
-      "schedule": ["every 24 hours"],
+      "schedule": ["0 0 * * *"],
       "groupName": "latest-prometheus-deps",
       "automerge": true,
       "autoApprove": true
