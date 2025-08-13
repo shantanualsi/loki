@@ -1,4 +1,4 @@
-{{- if and .Values.gateway.enabled  }}
+{{- if and .Values.gateway.enabled (not (and .Values.enterprise.enabled .Values.enterprise.gelGateway)) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,5 +8,5 @@ metadata:
     {{- include "loki.gatewayLabels" . | nindent 4 }}
 data:
   nginx.conf: |
-    {{- tpl .Values.gateway.nginxConfig.file . | indent 2 }}
+    {{- tpl .Values.gateway.nginxConfig.file . | nindent 4 }}
 {{- end }}

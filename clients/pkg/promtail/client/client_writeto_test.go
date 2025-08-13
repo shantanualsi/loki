@@ -18,10 +18,10 @@ import (
 	"github.com/prometheus/prometheus/tsdb/record"
 	"github.com/stretchr/testify/require"
 
-	"github.com/grafana/loki/clients/pkg/promtail/api"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/api"
 
-	"github.com/grafana/loki/pkg/ingester/wal"
-	"github.com/grafana/loki/pkg/logproto"
+	"github.com/grafana/loki/v3/pkg/ingester/wal"
+	"github.com/grafana/loki/v3/pkg/logproto"
 )
 
 func TestClientWriter_LogEntriesAreReconstructedAndForwardedCorrectly(t *testing.T) {
@@ -29,11 +29,14 @@ func TestClientWriter_LogEntriesAreReconstructedAndForwardedCorrectly(t *testing
 	ch := make(chan api.Entry)
 	defer close(ch)
 
+	var mu sync.Mutex
 	var receivedEntries []api.Entry
 
 	go func() {
 		for e := range ch {
+			mu.Lock()
 			receivedEntries = append(receivedEntries, e)
+			mu.Unlock()
 		}
 	}()
 
@@ -49,13 +52,8 @@ func TestClientWriter_LogEntriesAreReconstructedAndForwardedCorrectly(t *testing
 	testAppLabelsRef := chunks.HeadSeriesRef(1)
 	writeTo.StoreSeries([]record.RefSeries{
 		{
-			Ref: testAppLabelsRef,
-			Labels: []labels.Label{
-				{
-					Name:  "app",
-					Value: "test",
-				},
-			},
+			Ref:    testAppLabelsRef,
+			Labels: labels.FromStrings("app", "test"),
 		},
 	}, 1)
 
@@ -72,12 +70,16 @@ func TestClientWriter_LogEntriesAreReconstructedAndForwardedCorrectly(t *testing
 	}
 
 	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
 		return len(receivedEntries) == len(lines)
 	}, time.Second*10, time.Second)
+	mu.Lock()
 	for _, receivedEntry := range receivedEntries {
 		require.Contains(t, lines, receivedEntry.Line, "entry line was not expected")
 		require.Equal(t, model.LabelValue("test"), receivedEntry.Labels["app"])
 	}
+	mu.Unlock()
 }
 
 func TestClientWriter_LogEntriesWithoutMatchingSeriesAreIgnored(t *testing.T) {
@@ -105,13 +107,8 @@ func TestClientWriter_LogEntriesWithoutMatchingSeriesAreIgnored(t *testing.T) {
 	testAppLabelsRef := chunks.HeadSeriesRef(1)
 	writeTo.StoreSeries([]record.RefSeries{
 		{
-			Ref: testAppLabelsRef,
-			Labels: []labels.Label{
-				{
-					Name:  "app",
-					Value: "test",
-				},
-			},
+			Ref:    testAppLabelsRef,
+			Labels: labels.FromStrings("app", "test"),
 		},
 	}, 1)
 
@@ -186,10 +183,8 @@ func bench(numWriters, totalLines int, b *testing.B) {
 			// run as writing from segment n+w, and after finishing reset series up to n. That way we are only causing blocking,
 			// and not deleting actually used series
 			startWriter(numWriters+n, n, writeTo, totalLines/numWriters, record.RefSeries{
-				Ref: chunks.HeadSeriesRef(n),
-				Labels: labels.Labels{
-					{Name: "n", Value: fmt.Sprint(n)},
-				},
+				Ref:    chunks.HeadSeriesRef(n),
+				Labels: labels.FromStrings("app", fmt.Sprint(n)),
 			}, time.Millisecond*500)
 		}(n)
 	}
@@ -215,9 +210,9 @@ func bench(numWriters, totalLines int, b *testing.B) {
 // 4. After all are written, call a SeriesReset. This will block the entire series map and will hopefully block
 // some other writing routine.
 func startWriter(segmentNum, seriesToReset int, target *clientWriteTo, lines int, series record.RefSeries, maxInitialSleep time.Duration) {
-	randomSleepMax := func(max time.Duration) {
+	randomSleepMax := func(maxVal time.Duration) {
 		// random sleep to add some jitter
-		s := int64(rand.Uint64()) % int64(max)
+		s := int64(rand.Uint64()) % int64(maxVal)
 		time.Sleep(time.Duration(s))
 	}
 	// random sleep to add some jitter

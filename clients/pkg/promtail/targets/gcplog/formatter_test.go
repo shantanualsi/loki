@@ -6,13 +6,14 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/grafana/loki/clients/pkg/promtail/api"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/api"
 
-	"github.com/grafana/loki/pkg/logproto"
+	"github.com/grafana/loki/v3/pkg/logproto"
 )
 
 func TestFormat(t *testing.T) {
@@ -160,7 +161,7 @@ func TestFormat(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := parseGCPLogsEntry(c.msg.Data, c.labels, nil, c.useIncomingTimestamp, c.useFullLine, c.relabel)
+			got, err := parseGCPLogsEntry(c.msg.Data, c.labels, labels.EmptyLabels(), c.useIncomingTimestamp, c.useFullLine, c.relabel)
 
 			require.NoError(t, err)
 

@@ -2,6 +2,7 @@ package ingester
 
 import (
 	"flag"
+	"fmt"
 	"sync"
 	"time"
 
@@ -9,10 +10,11 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/tsdb/wlog"
+	"github.com/prometheus/prometheus/util/compression"
 
-	"github.com/grafana/loki/pkg/ingester/wal"
-	"github.com/grafana/loki/pkg/util/flagext"
-	util_log "github.com/grafana/loki/pkg/util/log"
+	"github.com/grafana/loki/v3/pkg/ingester/wal"
+	"github.com/grafana/loki/v3/pkg/util/flagext"
+	util_log "github.com/grafana/loki/v3/pkg/util/log"
 )
 
 var (
@@ -33,7 +35,7 @@ type WALConfig struct {
 
 func (cfg *WALConfig) Validate() error {
 	if cfg.Enabled && cfg.CheckpointDuration < 1 {
-		return errors.Errorf("invalid checkpoint duration: %v", cfg.CheckpointDuration)
+		return fmt.Errorf("invalid checkpoint duration: %v", cfg.CheckpointDuration)
 	}
 	return nil
 }
@@ -81,7 +83,7 @@ func newWAL(cfg WALConfig, registerer prometheus.Registerer, metrics *ingesterMe
 		return noopWAL{}, nil
 	}
 
-	tsdbWAL, err := wlog.NewSize(util_log.Logger, registerer, cfg.Dir, walSegmentSize, false)
+	tsdbWAL, err := wlog.NewSize(util_log.SlogFromGoKit(util_log.Logger), registerer, cfg.Dir, walSegmentSize, compression.None)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +110,7 @@ func (w *walWrapper) Log(record *wal.Record) error {
 	}
 	select {
 	case <-w.quit:
-		return nil
+		return errors.New("wal is stopped")
 	default:
 		buf := recordPool.GetBytes()
 		defer func() {

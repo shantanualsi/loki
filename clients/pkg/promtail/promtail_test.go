@@ -30,19 +30,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/grafana/loki/clients/pkg/logentry/stages"
-	"github.com/grafana/loki/clients/pkg/promtail/client"
-	"github.com/grafana/loki/clients/pkg/promtail/config"
-	"github.com/grafana/loki/clients/pkg/promtail/positions"
-	"github.com/grafana/loki/clients/pkg/promtail/scrapeconfig"
-	"github.com/grafana/loki/clients/pkg/promtail/server"
-	pserver "github.com/grafana/loki/clients/pkg/promtail/server"
-	file2 "github.com/grafana/loki/clients/pkg/promtail/targets/file"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/testutils"
+	"github.com/grafana/loki/v3/clients/pkg/logentry/stages"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/client"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/config"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/positions"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/scrapeconfig"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/server"
+	pserver "github.com/grafana/loki/v3/clients/pkg/promtail/server"
+	file2 "github.com/grafana/loki/v3/clients/pkg/promtail/targets/file"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/testutils"
 
-	"github.com/grafana/loki/pkg/logproto"
-	"github.com/grafana/loki/pkg/util"
-	util_log "github.com/grafana/loki/pkg/util/log"
+	"github.com/grafana/loki/v3/pkg/logproto"
+	"github.com/grafana/loki/v3/pkg/util"
+	util_log "github.com/grafana/loki/v3/pkg/util/log"
 )
 
 var clientMetrics = client.NewMetrics(prometheus.DefaultRegisterer)
@@ -481,13 +481,7 @@ func (h *testServerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.t.Error("Failed to parse incoming labels", err)
 			return
 		}
-		file := ""
-		for _, label := range parsedLabels {
-			if label.Name == file2.FilenameLabel {
-				file = label.Value
-				continue
-			}
-		}
+		file := parsedLabels.Get(file2.FilenameLabel)
 		if file == "" {
 			h.t.Error("Expected to find a label with name `filename` but did not!")
 			return
@@ -522,7 +516,7 @@ func getPromMetrics(t *testing.T, httpListenAddr net.Addr) ([]byte, string) {
 func parsePromMetrics(t *testing.T, bytes []byte, contentType string, metricName string, label string) map[string]float64 {
 	rb := map[string]float64{}
 
-	pr, err := textparse.New(bytes, contentType)
+	pr, err := textparse.New(bytes, contentType, "", false, false, false, nil)
 	require.NoError(t, err)
 	for {
 		et, err := pr.Next()
@@ -536,7 +530,7 @@ func parsePromMetrics(t *testing.T, bytes []byte, contentType string, metricName
 		case textparse.EntrySeries:
 			var res labels.Labels
 			_, _, v := pr.Series()
-			pr.Metric(&res)
+			pr.Labels(&res)
 			switch res.Get(labels.MetricName) {
 			case metricName:
 				rb[res.Get(label)] = v
@@ -658,6 +652,8 @@ func Test_DryRun(t *testing.T) {
 		Config: serverww.Config{
 			HTTPListenNetwork: serverww.DefaultNetwork,
 			GRPCListenNetwork: serverww.DefaultNetwork,
+			HTTPListenAddress: localhostConfig.HTTPListenAddress,
+			GRPCListenAddress: localhostConfig.GRPCListenAddress,
 		},
 	}
 
@@ -687,6 +683,11 @@ func Test_DryRun(t *testing.T) {
 	require.IsType(t, &client.Manager{}, p.client)
 }
 
+var localhostConfig = serverww.Config{
+	HTTPListenAddress: "localhost",
+	GRPCListenAddress: "localhost",
+}
+
 func Test_Reload(t *testing.T) {
 	f, err := os.CreateTemp("", "Test_Reload")
 	require.NoError(t, err)
@@ -695,6 +696,7 @@ func Test_Reload(t *testing.T) {
 	cfg := config.Config{
 		ServerConfig: server.Config{
 			Reload: true,
+			Config: localhostConfig,
 		},
 		ClientConfig: client.Config{URL: flagext.URLValue{URL: &url.URL{Host: "string"}}},
 		PositionsConfig: positions.Config{
@@ -708,6 +710,7 @@ func Test_Reload(t *testing.T) {
 	expectedConfig := &config.Config{
 		ServerConfig: server.Config{
 			Reload: true,
+			Config: localhostConfig,
 		},
 		ClientConfig: client.Config{URL: flagext.URLValue{URL: &url.URL{Host: "reloadtesturl"}}},
 		PositionsConfig: positions.Config{
@@ -764,6 +767,7 @@ func Test_ReloadFail_NotPanic(t *testing.T) {
 	cfg := config.Config{
 		ServerConfig: server.Config{
 			Reload: true,
+			Config: localhostConfig,
 		},
 		ClientConfig: client.Config{URL: flagext.URLValue{URL: &url.URL{Host: "string"}}},
 		PositionsConfig: positions.Config{
@@ -775,6 +779,7 @@ func Test_ReloadFail_NotPanic(t *testing.T) {
 	expectedConfig := &config.Config{
 		ServerConfig: server.Config{
 			Reload: true,
+			Config: localhostConfig,
 		},
 		ClientConfig: client.Config{URL: flagext.URLValue{URL: &url.URL{Host: "reloadtesturl"}}},
 		PositionsConfig: positions.Config{

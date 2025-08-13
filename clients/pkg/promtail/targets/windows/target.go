@@ -18,12 +18,10 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/grafana/loki/clients/pkg/promtail/api"
-	"github.com/grafana/loki/clients/pkg/promtail/scrapeconfig"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/target"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/windows/win_eventlog"
-
-	util_log "github.com/grafana/loki/pkg/util/log"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/api"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/scrapeconfig"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/target"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/windows/win_eventlog"
 )
 
 var fs = afero.NewOsFs()
@@ -115,7 +113,7 @@ func (t *Target) loop() {
 			if err != nil {
 				if err != win_eventlog.ERROR_NO_MORE_ITEMS {
 					t.err = err
-					level.Error(util_log.Logger).Log("msg", "error fetching events", "err", err)
+					level.Error(t.logger).Log("msg", "error fetching events", "err", err)
 				}
 				break loop
 			}
@@ -125,7 +123,7 @@ func (t *Target) loop() {
 				t.handler.Chan() <- entry
 				if err := t.bm.save(handles[i]); err != nil {
 					t.err = err
-					level.Error(util_log.Logger).Log("msg", "error saving bookmark", "err", err)
+					level.Error(t.logger).Log("msg", "error saving bookmark", "err", err)
 				}
 			}
 			win_eventlog.Close(handles)
@@ -143,7 +141,7 @@ func (t *Target) loop() {
 // renderEntries renders Loki entries from windows event logs
 func (t *Target) renderEntries(events []win_eventlog.Event) []api.Entry {
 	res := make([]api.Entry, 0, len(events))
-	lbs := labels.NewBuilder(nil)
+	lbs := labels.NewBuilder(labels.EmptyLabels())
 	for _, event := range events {
 		entry := api.Entry{
 			Labels: make(model.LabelSet),
@@ -172,12 +170,12 @@ func (t *Target) renderEntries(events []win_eventlog.Event) []api.Entry {
 		// apply relabelings.
 		processed, _ := relabel.Process(lbs.Labels(), t.relabelConfig...)
 
-		for _, lbl := range processed {
+		processed.Range(func(lbl labels.Label) {
 			if strings.HasPrefix(lbl.Name, "__") {
-				continue
+				return
 			}
 			entry.Labels[model.LabelName(lbl.Name)] = model.LabelValue(lbl.Value)
-		}
+		})
 
 		line, err := formatLine(t.cfg, event)
 		if err != nil {

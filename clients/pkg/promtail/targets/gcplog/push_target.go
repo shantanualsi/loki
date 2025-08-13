@@ -9,17 +9,16 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	dslog "github.com/grafana/dskit/log"
 	"github.com/grafana/dskit/server"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/relabel"
 
-	"github.com/grafana/loki/clients/pkg/promtail/api"
-	"github.com/grafana/loki/clients/pkg/promtail/scrapeconfig"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/serverutils"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/target"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/api"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/scrapeconfig"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/serverutils"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/target"
 
-	util_log "github.com/grafana/loki/pkg/util/log"
+	util_log "github.com/grafana/loki/v3/pkg/util/log"
 )
 
 type pushTarget struct {
@@ -80,7 +79,7 @@ func (h *pushTarget) run() error {
 	h.config.Server.RegisterInstrumentation = false
 
 	// Wrapping util logger with component-specific key vals, and the expected GoKit logging interface
-	h.config.Server.Log = dslog.GoKit(log.With(util_log.Logger, "component", "gcp_push"))
+	h.config.Server.Log = log.With(util_log.Logger, "component", "gcp_push")
 
 	srv, err := server.New(h.config.Server)
 	if err != nil {

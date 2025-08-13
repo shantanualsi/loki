@@ -14,11 +14,11 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 
-	"github.com/grafana/loki/clients/pkg/promtail/api"
-	"github.com/grafana/loki/clients/pkg/promtail/scrapeconfig"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/target"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/api"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/scrapeconfig"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/target"
 
-	"github.com/grafana/loki/pkg/logproto"
+	"github.com/grafana/loki/v3/pkg/logproto"
 )
 
 // SeverityLevels maps severity levels to severity string levels.
@@ -111,7 +111,7 @@ func (t *Target) run() {
 }
 
 func (t *Target) handleMessage(msg *gelf.Message) {
-	lb := labels.NewBuilder(nil)
+	lb := labels.NewBuilder(labels.EmptyLabels())
 
 	// Add all labels from the config.
 	for k, v := range t.config.Labels {
@@ -125,12 +125,12 @@ func (t *Target) handleMessage(msg *gelf.Message) {
 	processed, _ := relabel.Process(lb.Labels(), t.relabelConfig...)
 
 	filtered := make(model.LabelSet)
-	for _, lbl := range processed {
+	processed.Range(func(lbl labels.Label) {
 		if strings.HasPrefix(lbl.Name, "__") {
-			continue
+			return // (will continue Range loop, not abort)
 		}
 		filtered[model.LabelName(lbl.Name)] = model.LabelValue(lbl.Value)
-	}
+	})
 
 	var timestamp time.Time
 	if t.config.UseIncomingTimestamp && msg.TimeUnix != 0 {

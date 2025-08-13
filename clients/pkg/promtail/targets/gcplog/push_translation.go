@@ -9,10 +9,10 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 
-	"github.com/grafana/loki/clients/pkg/promtail/api"
-	lokiClient "github.com/grafana/loki/clients/pkg/promtail/client"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/api"
+	lokiClient "github.com/grafana/loki/v3/clients/pkg/promtail/client"
 
-	"github.com/grafana/loki/pkg/util"
+	"github.com/grafana/loki/v3/pkg/util"
 )
 
 // PushMessage is the POST body format sent by GCP PubSub push subscriptions.
@@ -44,7 +44,7 @@ func (pm PushMessage) Validate() error {
 func translate(m PushMessage, other model.LabelSet, useIncomingTimestamp, useFullLine bool, relabelConfigs []*relabel.Config, xScopeOrgID string) (api.Entry, error) {
 	// Collect all push-specific labels. Every one of them is first configured as optional, and the user
 	// can relabel it if needed. The relabeling and internal drop is handled in parseGCPLogsEntry.
-	lbs := labels.NewBuilder(nil)
+	lbs := labels.NewBuilder(labels.EmptyLabels())
 	lbs.Set("__gcp_message_id", m.Message.ID)
 	lbs.Set("__gcp_subscription_name", m.Subscription)
 	for k, v := range m.Message.Attributes {

@@ -3,15 +3,14 @@ package syntax
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
 	"github.com/prometheus/prometheus/model/labels"
 	promql_parser "github.com/prometheus/prometheus/promql/parser"
 
-	"github.com/grafana/loki/pkg/logqlmodel"
-	"github.com/grafana/loki/pkg/util"
+	"github.com/grafana/loki/v3/pkg/logqlmodel"
+	"github.com/grafana/loki/v3/pkg/util"
 )
 
 const (
@@ -23,7 +22,7 @@ const (
 var parserPool = sync.Pool{
 	New: func() interface{} {
 		p := &parser{
-			p:      &exprParserImpl{},
+			p:      &syntaxParserImpl{},
 			Reader: strings.NewReader(""),
 			lexer:  &lexer{},
 		}
@@ -31,20 +30,26 @@ var parserPool = sync.Pool{
 	},
 }
 
-const maxInputSize = 5120
+// (E.Welch) We originally added this limit from fuzz testing and realizing there should be some maximum limit to an allowed query size.
+// The original limit was 5120 based on some internet searching and a best estimate of what a reasonable limit would be.
+// We have seen use cases with queries containing a lot of filter expressions or long expanded variable names where this limit was too small.
+// Apparently the spec does not specify a limit, and more internet searching suggests almost all browsers will handle 100k+ length urls without issue
+// Some limit here still seems prudent however, so the new limit is now 128k.
+// Also note this is used to allocate the buffer for reading the query string, so there is some memory cost to making this larger.
+const maxInputSize = 131072
 
 func init() {
 	// Improve the error messages coming out of yacc.
-	exprErrorVerbose = true
+	syntaxErrorVerbose = true
 	// uncomment when you need to understand yacc rule tree.
 	// exprDebug = 3
 	for str, tok := range tokens {
-		exprToknames[tok-exprPrivate+1] = str
+		syntaxToknames[tok-syntaxPrivate+1] = str
 	}
 }
 
 type parser struct {
-	p *exprParserImpl
+	p *syntaxParserImpl
 	*lexer
 	expr Expr
 	*strings.Reader
@@ -99,15 +104,41 @@ func ParseExprWithoutValidation(input string) (expr Expr, err error) {
 	return p.Parse()
 }
 
+func MustParseExpr(input string) Expr {
+	expr, err := ParseExpr(input)
+	if err != nil {
+		panic(err)
+	}
+	return expr
+}
+
 func validateExpr(expr Expr) error {
 	switch e := expr.(type) {
 	case SampleExpr:
 		return validateSampleExpr(e)
 	case LogSelectorExpr:
 		return validateLogSelectorExpression(e)
+	case VariantsExpr:
+		return validateVariantsExpr(e)
 	default:
 		return logqlmodel.NewParseError(fmt.Sprintf("unexpected expression type: %v", e), 0, 0)
 	}
+}
+
+func validateVariantsExpr(e VariantsExpr) error {
+	err := validateLogSelectorExpression(e.LogRange().Left)
+	if err != nil {
+		return err
+	}
+
+	for _, variant := range e.Variants() {
+		err = validateSampleExpr(variant)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // validateMatchers checks whether a query would touch all the streams in the query range or uses at least one matcher to select specific streams.
@@ -121,14 +152,24 @@ func validateMatchers(matchers []*labels.Matcher) error {
 
 // ParseMatchers parses a string and returns labels matchers, if the expression contains
 // anything else it will return an error.
-func ParseMatchers(input string) ([]*labels.Matcher, error) {
-	expr, err := ParseExpr(input)
+func ParseMatchers(input string, validate bool) ([]*labels.Matcher, error) {
+	var (
+		expr Expr
+		err  error
+	)
+
+	if validate {
+		expr, err = ParseExpr(input)
+	} else {
+		expr, err = ParseExprWithoutValidation(input)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 	matcherExpr, ok := expr.(*MatchersExpr)
 	if !ok {
-		return nil, errors.New("only label matchers is supported")
+		return nil, logqlmodel.ErrParseMatchers
 	}
 	return matcherExpr.Mts, nil
 }
@@ -181,6 +222,11 @@ func validateSampleExpr(expr SampleExpr) error {
 			}
 		}
 		return validateSampleExpr(e.Left)
+	case *LabelReplaceExpr:
+		if e.err != nil {
+			return e.err
+		}
+		return validateSampleExpr(e.Left)
 	default:
 		selector, err := e.Selector()
 		if err != nil {
@@ -230,11 +276,8 @@ func ParseLogSelector(input string, validate bool) (LogSelectorExpr, error) {
 func ParseLabels(lbs string) (labels.Labels, error) {
 	ls, err := promql_parser.ParseMetric(lbs)
 	if err != nil {
-		return nil, err
+		return labels.EmptyLabels(), err
 	}
-	// Sort labels to ensure functionally equivalent
-	// inputs map to the same output
-	sort.Sort(ls)
 
 	// Use the label builder to trim empty label values.
 	// Empty label values are equivalent to absent labels

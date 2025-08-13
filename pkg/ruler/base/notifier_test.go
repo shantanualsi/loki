@@ -14,8 +14,8 @@ import (
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/stretchr/testify/require"
 
-	ruler_config "github.com/grafana/loki/pkg/ruler/config"
-	"github.com/grafana/loki/pkg/util"
+	ruler_config "github.com/grafana/loki/v3/pkg/ruler/config"
+	"github.com/grafana/loki/v3/pkg/util"
 )
 
 func TestBuildNotifierConfig(t *testing.T) {
@@ -319,9 +319,7 @@ func TestBuildNotifierConfig(t *testing.T) {
 				AlertManagerConfig: ruler_config.AlertManagerConfig{
 					AlertmanagerURL: "http://alertmanager.default.svc.cluster.local/alertmanager",
 				},
-				ExternalLabels: []labels.Label{
-					{Name: "region", Value: "us-east-1"},
-				},
+				ExternalLabels: labels.FromStrings("region", "us-east-1"),
 			},
 			ncfg: &config.Config{
 				AlertingConfig: config.AlertingConfig{
@@ -341,9 +339,7 @@ func TestBuildNotifierConfig(t *testing.T) {
 					},
 				},
 				GlobalConfig: config.GlobalConfig{
-					ExternalLabels: []labels.Label{
-						{Name: "region", Value: "us-east-1"},
-					},
+					ExternalLabels: labels.FromStrings("region", "us-east-1"),
 				},
 			},
 		},
@@ -361,9 +357,7 @@ func TestBuildNotifierConfig(t *testing.T) {
 						},
 					},
 				},
-				ExternalLabels: []labels.Label{
-					{Name: "region", Value: "us-east-1"},
-				},
+				ExternalLabels: labels.FromStrings("region", "us-east-1"),
 			},
 			ncfg: &config.Config{
 				AlertingConfig: config.AlertingConfig{
@@ -391,9 +385,7 @@ func TestBuildNotifierConfig(t *testing.T) {
 					},
 				},
 				GlobalConfig: config.GlobalConfig{
-					ExternalLabels: []labels.Label{
-						{Name: "region", Value: "us-east-1"},
-					},
+					ExternalLabels: labels.FromStrings("region", "us-east-1"),
 				},
 			},
 		},

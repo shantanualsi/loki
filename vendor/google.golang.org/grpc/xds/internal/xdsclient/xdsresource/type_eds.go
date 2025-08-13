@@ -18,7 +18,7 @@
 package xdsresource
 
 import (
-	"google.golang.org/grpc/xds/internal"
+	"google.golang.org/grpc/xds/internal/clients"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -49,15 +49,16 @@ const (
 
 // Endpoint contains information of an endpoint.
 type Endpoint struct {
-	Address      string
+	Addresses    []string
 	HealthStatus EndpointHealthStatus
 	Weight       uint32
+	HashKey      string
 }
 
 // Locality contains information of a locality.
 type Locality struct {
 	Endpoints []Endpoint
-	ID        internal.LocalityID
+	ID        clients.Locality
 	Priority  uint32
 	Weight    uint32
 }
@@ -72,12 +73,4 @@ type EndpointsUpdate struct {
 
 	// Raw is the resource from the xds response.
 	Raw *anypb.Any
-}
-
-// EndpointsUpdateErrTuple is a tuple with the update and error. It contains the
-// results from unmarshal functions. It's used to pass unmarshal results of
-// multiple resources together, e.g. in maps like `map[string]{Update,error}`.
-type EndpointsUpdateErrTuple struct {
-	Update EndpointsUpdate
-	Err    error
 }

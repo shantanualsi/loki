@@ -22,10 +22,10 @@ import (
 	prometheus_config "github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/model/relabel"
 
-	"github.com/grafana/loki/pkg/ruler/util"
-	storage_config "github.com/grafana/loki/pkg/storage/config"
-	util_validation "github.com/grafana/loki/pkg/util/validation"
-	"github.com/grafana/loki/pkg/validation"
+	"github.com/grafana/loki/v3/pkg/ruler/util"
+	storage_config "github.com/grafana/loki/v3/pkg/storage/config"
+	util_validation "github.com/grafana/loki/v3/pkg/util/validation"
+	"github.com/grafana/loki/v3/pkg/validation"
 )
 
 var (
@@ -80,6 +80,7 @@ type ConfigEntry struct {
 	Block     *ConfigBlock
 	BlockDesc string
 	Root      bool
+	Inline    bool
 
 	// In case the Kind is KindField
 	FieldFlag    string
@@ -228,7 +229,25 @@ func config(block *ConfigBlock, cfg interface{}, flags map[uintptr]*flag.Flag, r
 					blocks = append(blocks, subBlock)
 				}
 			} else {
-				subBlock = block
+				// For inline fields, we still want to add them to the root blocks list
+				if isRoot {
+					subBlock = &ConfigBlock{
+						Name: rootName,
+						Desc: getFieldDescription(cfg, field, rootDesc),
+					}
+					blocks = append(blocks, subBlock)
+
+					// Add a field entry that references the root block
+					block.Add(&ConfigEntry{
+						Kind:      KindBlock,
+						Block:     subBlock,
+						BlockDesc: subBlock.Desc,
+						Root:      true,
+						Inline:    true,
+					})
+				} else {
+					subBlock = block
+				}
 			}
 
 			if field.Type.Kind() == reflect.Ptr {
@@ -301,6 +320,7 @@ func config(block *ConfigBlock, cfg interface{}, flags map[uintptr]*flag.Flag, r
 				Required:     isFieldRequired(field),
 				FieldDesc:    getFieldDescription(cfg, field, ""),
 				FieldType:    fieldType,
+				FieldDefault: getFieldDefault(field, ""),
 				FieldExample: getFieldExample(fieldName, field.Type),
 				Element:      element,
 			})
@@ -461,6 +481,8 @@ func getCustomFieldType(t reflect.Type) (string, bool) {
 		return "remote_write_config...", true
 	case reflect.TypeOf(validation.OverwriteMarshalingStringMap{}).String():
 		return "headers", true
+	case reflect.TypeOf(relabel.Regexp{}).String():
+		return fieldString, true
 	default:
 		return "", false
 	}
@@ -492,7 +514,7 @@ func getFieldExample(fieldKey string, fieldType reflect.Type) *FieldExample {
 }
 
 func getCustomFieldEntry(cfg interface{}, field reflect.StructField, fieldValue reflect.Value, flags map[uintptr]*flag.Flag) (*ConfigEntry, error) {
-	if field.Type == reflect.TypeOf(log.Level{}) || field.Type == reflect.TypeOf(log.Format{}) {
+	if field.Type == reflect.TypeOf(log.Level{}) {
 		fieldFlag, err := getFieldFlag(field, fieldValue, flags)
 		if err != nil || fieldFlag == nil {
 			return nil, err

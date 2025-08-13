@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -20,14 +19,14 @@ import (
 
 	"github.com/grafana/dskit/tenant"
 
-	"github.com/grafana/loki/clients/pkg/promtail/api"
-	"github.com/grafana/loki/clients/pkg/promtail/scrapeconfig"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/serverutils"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/target"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/api"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/scrapeconfig"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/serverutils"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/target"
 
-	"github.com/grafana/loki/pkg/loghttp/push"
-	"github.com/grafana/loki/pkg/logproto"
-	util_log "github.com/grafana/loki/pkg/util/log"
+	"github.com/grafana/loki/v3/pkg/loghttp/push"
+	"github.com/grafana/loki/v3/pkg/logproto"
+	util_log "github.com/grafana/loki/v3/pkg/util/log"
 )
 
 type PushTarget struct {
@@ -79,11 +78,23 @@ func (t *PushTarget) run() error {
 
 	// The logger registers a metric which will cause a duplicate registry panic unless we provide an empty registry
 	// The metric created is for counting log lines and isn't likely to be missed.
-	util_log.InitLogger(&t.config.Server, prometheus.NewRegistry(), true, false)
+	serverCfg := &t.config.Server
+	serverCfg.Log = util_log.InitLogger(serverCfg, prometheus.NewRegistry(), false)
+
+	// Set new registry for upcoming metric server
+	// If not, it'll likely panic when the tool gets reloaded.
+	if t.config.Server.Registerer == nil {
+		t.config.Server.Registerer = prometheus.NewRegistry()
+	}
 
 	srv, err := server.New(t.config.Server)
 	if err != nil {
 		return err
+	}
+
+	// Default to 100MB if not set to align with the default value in the distributor.
+	if t.config.MaxSendMsgSize == 0 {
+		t.config.MaxSendMsgSize = 100 << 20
 	}
 
 	t.server = srv
@@ -104,7 +115,7 @@ func (t *PushTarget) run() error {
 func (t *PushTarget) handleLoki(w http.ResponseWriter, r *http.Request) {
 	logger := util_log.WithContext(r.Context(), util_log.Logger)
 	userID, _ := tenant.TenantID(r.Context())
-	req, err := push.ParseRequest(logger, userID, r, nil)
+	req, _, err := push.ParseRequest(logger, userID, t.config.MaxSendMsgSize, r, push.EmptyLimits{}, nil, push.ParseLokiRequest, nil, nil, "", "loki")
 	if err != nil {
 		level.Warn(t.logger).Log("msg", "failed to parse incoming push request", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -117,7 +128,6 @@ func (t *PushTarget) handleLoki(w http.ResponseWriter, r *http.Request) {
 			lastErr = err
 			continue
 		}
-		sort.Sort(ls)
 
 		lb := labels.NewBuilder(ls)
 
@@ -128,25 +138,26 @@ func (t *PushTarget) handleLoki(w http.ResponseWriter, r *http.Request) {
 
 		// Apply relabeling
 		processed, keep := relabel.Process(lb.Labels(), t.relabelConfig...)
-		if !keep || len(processed) == 0 {
+		if !keep || processed.IsEmpty() {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
 		// Convert to model.LabelSet
 		filtered := model.LabelSet{}
-		for i := range processed {
-			if strings.HasPrefix(processed[i].Name, "__") {
-				continue
+		processed.Range(func(lbl labels.Label) {
+			if strings.HasPrefix(lbl.Name, "__") {
+				return // (will continue Range loop, not abort)
 			}
-			filtered[model.LabelName(processed[i].Name)] = model.LabelValue(processed[i].Value)
-		}
+			filtered[model.LabelName(lbl.Name)] = model.LabelValue(lbl.Value)
+		})
 
 		for _, entry := range stream.Entries {
 			e := api.Entry{
 				Labels: filtered.Clone(),
 				Entry: logproto.Entry{
-					Line: entry.Line,
+					Line:               entry.Line,
+					StructuredMetadata: entry.StructuredMetadata,
 				},
 			}
 			if t.config.KeepTimestamp {

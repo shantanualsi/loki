@@ -26,15 +26,16 @@ import (
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	v3endpointpb "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	v3typepb "github.com/envoyproxy/go-control-plane/envoy/type/v3"
-	"github.com/golang/protobuf/proto"
-	"google.golang.org/grpc/internal/grpclog"
+	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/pretty"
 	"google.golang.org/grpc/xds/internal"
+	"google.golang.org/grpc/xds/internal/clients"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
-func unmarshalEndpointsResource(r *anypb.Any, logger *grpclog.PrefixLogger) (string, EndpointsUpdate, error) {
-	r, err := unwrapResource(r)
+func unmarshalEndpointsResource(r *anypb.Any) (string, EndpointsUpdate, error) {
+	r, err := UnwrapResource(r)
 	if err != nil {
 		return "", EndpointsUpdate{}, fmt.Errorf("failed to unwrap resource: %v", err)
 	}
@@ -47,9 +48,8 @@ func unmarshalEndpointsResource(r *anypb.Any, logger *grpclog.PrefixLogger) (str
 	if err := proto.Unmarshal(r.GetValue(), cla); err != nil {
 		return "", EndpointsUpdate{}, fmt.Errorf("failed to unmarshal resource: %v", err)
 	}
-	logger.Infof("Resource with name: %v, type: %T, contains: %v", cla.GetClusterName(), cla, pretty.ToJSON(cla))
 
-	u, err := parseEDSRespProto(cla, logger)
+	u, err := parseEDSRespProto(cla)
 	if err != nil {
 		return cla.GetClusterName(), EndpointsUpdate{}, err
 	}
@@ -95,21 +95,49 @@ func parseEndpoints(lbEndpoints []*v3endpointpb.LbEndpoint, uniqueEndpointAddrs 
 			}
 			weight = w.GetValue()
 		}
-		addr := parseAddress(lbEndpoint.GetEndpoint().GetAddress().GetSocketAddress())
-		if uniqueEndpointAddrs[addr] {
-			return nil, fmt.Errorf("duplicate endpoint with the same address %s", addr)
+		addrs := []string{parseAddress(lbEndpoint.GetEndpoint().GetAddress().GetSocketAddress())}
+		if envconfig.XDSDualstackEndpointsEnabled {
+			for _, sa := range lbEndpoint.GetEndpoint().GetAdditionalAddresses() {
+				addrs = append(addrs, parseAddress(sa.GetAddress().GetSocketAddress()))
+			}
 		}
-		uniqueEndpointAddrs[addr] = true
+
+		for _, a := range addrs {
+			if uniqueEndpointAddrs[a] {
+				return nil, fmt.Errorf("duplicate endpoint with the same address %s", a)
+			}
+			uniqueEndpointAddrs[a] = true
+		}
 		endpoints = append(endpoints, Endpoint{
 			HealthStatus: EndpointHealthStatus(lbEndpoint.GetHealthStatus()),
-			Address:      addr,
+			Addresses:    addrs,
 			Weight:       weight,
+			HashKey:      hashKey(lbEndpoint),
 		})
 	}
 	return endpoints, nil
 }
 
-func parseEDSRespProto(m *v3endpointpb.ClusterLoadAssignment, logger *grpclog.PrefixLogger) (EndpointsUpdate, error) {
+// hashKey extracts and returns the hash key from the given LbEndpoint. If no
+// hash key is found, it returns an empty string.
+func hashKey(lbEndpoint *v3endpointpb.LbEndpoint) string {
+	// "The xDS resolver, described in A74, will be changed to set the hash_key
+	// endpoint attribute to the value of LbEndpoint.Metadata envoy.lb hash_key
+	// field, as described in Envoy's documentation for the ring hash load
+	// balancer." - A76
+	if envconfig.XDSEndpointHashKeyBackwardCompat {
+		return ""
+	}
+	envoyLB := lbEndpoint.GetMetadata().GetFilterMetadata()["envoy.lb"]
+	if envoyLB != nil {
+		if h := envoyLB.GetFields()["hash_key"]; h != nil {
+			return h.GetStringValue()
+		}
+	}
+	return ""
+}
+
+func parseEDSRespProto(m *v3endpointpb.ClusterLoadAssignment) (EndpointsUpdate, error) {
 	ret := EndpointsUpdate{}
 	for _, dropPolicy := range m.GetPolicy().GetDropOverloads() {
 		ret.Drops = append(ret.Drops, parseDropPolicy(dropPolicy))
@@ -137,12 +165,23 @@ func parseEDSRespProto(m *v3endpointpb.ClusterLoadAssignment, logger *grpclog.Pr
 			localitiesWithPriority = make(map[string]bool)
 			priorities[priority] = localitiesWithPriority
 		}
-		lid := internal.LocalityID{
+		lid := clients.Locality{
 			Region:  l.Region,
 			Zone:    l.Zone,
 			SubZone: l.SubZone,
 		}
-		lidStr, _ := lid.ToString()
+		lidStr := internal.LocalityString(lid)
+
+		// "Since an xDS configuration can place a given locality under multiple
+		// priorities, it is possible to see locality weight attributes with
+		// different values for the same locality." - A52
+		//
+		// This is handled in the client by emitting the locality weight
+		// specified for the priority it is specified in. If the same locality
+		// has a different weight in two priorities, each priority will specify
+		// a locality with the locality weight specified for that priority, and
+		// thus the subsequent tree of balancers linked to that priority will
+		// use that locality weight as well.
 		if localitiesWithPriority[lidStr] {
 			return EndpointsUpdate{}, fmt.Errorf("duplicate locality %s with the same priority %v", lidStr, priority)
 		}
@@ -154,7 +193,7 @@ func parseEDSRespProto(m *v3endpointpb.ClusterLoadAssignment, logger *grpclog.Pr
 		ret.Localities = append(ret.Localities, Locality{
 			ID:        lid,
 			Endpoints: endpoints,
-			Weight:    locality.GetLoadBalancingWeight().GetValue(),
+			Weight:    weight,
 			Priority:  priority,
 		})
 	}

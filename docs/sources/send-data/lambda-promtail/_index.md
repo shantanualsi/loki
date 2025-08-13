@@ -1,15 +1,15 @@
 ---
-title: Lambda Promtail client 
+title: Lambda Promtail client
 menuTitle:  Lambda Promtail
-description: How to configure the Lambda Promtail client workflow.
-aliases: 
+description: Configuring the Lambda Promtail client to send logs to Loki.
+aliases:
 - ../clients/lambda-promtail/
 weight:  700
 ---
 
-# Lambda Promtail client 
+# Lambda Promtail client
 
-Grafana Loki includes [Terraform](https://www.terraform.io/) and [CloudFormation](https://aws.amazon.com/cloudformation/) for shipping Cloudwatch, Cloudtrail, VPC Flow Logs and loadbalancer logs to Loki via a [lambda function](https://aws.amazon.com/lambda/). This is done via [lambda-promtail](https://github.com/grafana/loki/blob/main/tools/lambda-promtail) which processes cloudwatch events and propagates them to Loki (or a Promtail instance) via the push-api [scrape config]({{< relref "../../clients/promtail/configuration#loki_push_api" >}}).
+Grafana Loki includes [Terraform](https://www.terraform.io/) and [CloudFormation](https://aws.amazon.com/cloudformation/) for shipping Cloudwatch, Cloudtrail, VPC Flow Logs and loadbalancer logs to Loki via a [lambda function](https://aws.amazon.com/lambda/). This is done via [lambda-promtail](https://github.com/grafana/loki/blob/main/tools/lambda-promtail) which processes cloudwatch events and propagates them to Loki (or a Promtail instance) via the push-api [scrape config](../promtail/configuration/#loki_push_api).
 
 ## Deployment
 
@@ -24,10 +24,10 @@ The Terraform deployment also takes in an array of log group and bucket names, a
 
 There's also a flag to keep the log stream label when propagating the logs from Cloudwatch, which defaults to false. This can be helpful when the cardinality is too large, such as the case of a log stream per lambda invocation.
 
-Additionally, an environment variable can be configured to add extra labels to the logs streamed by lambda-protmail.
+Additionally, an environment variable can be configured to add extra labels to the logs streamed by lambda-promtail.
 These extra labels will take the form `__extra_<name>=<value>`.
 
-An optional environment variable can be configured to add the tenant ID to the logs streamed by lambda-protmail.
+An optional environment variable can be configured to add the tenant ID to the logs streamed by lambda-promtail.
 
 In an effort to make deployment of lambda-promtail as simple as possible, we've created a [public ECR repo](https://gallery.ecr.aws/grafana/lambda-promtail) to publish our builds of lambda-promtail. Users may clone this repo, make their own modifications to the Go code, and upload their own image to their own ECR repo.
 
@@ -60,7 +60,7 @@ To add tenant id add `-var "tenant_id=value"`.
 
 Note that the creation of a subscription filter on Cloudwatch in the provided Terraform file only accepts an array of log group names.
 It does **not** accept strings for regex filtering on the logs contents via the subscription filters. We suggest extending the Terraform file to do so.
-Or, have lambda-promtail write to Promtail and use [pipeline stages](/docs/loki/latest/clients/promtail/stages/drop/).
+Or, have lambda-promtail write to Promtail and use [pipeline stages](/docs/loki/<LOKI_VERSION>/send-data/promtail/stages/drop/).
 
 CloudFormation:
 ```
@@ -85,11 +85,13 @@ To add a tenant ID, add `ParameterKey=TenantID,ParameterValue=value`.
 
 To modify an existing CloudFormation stack, use [update-stack](https://docs.aws.amazon.com/cli/latest/reference/cloudformation/update-stack.html).
 
+If using CloudFormation to write your infrastructure code, you should consider the [EventBridge based solution](#s3-based-logging-and-cloudformation) for easier deployment.
+
 ## Uses
 
 ### Ephemeral Jobs
 
-This workflow is intended to be an effective approach for monitoring ephemeral jobs such as those run on AWS Lambda which are otherwise hard/impossible to monitor via one of the other Loki [clients]({{< relref ".." >}}).
+This workflow is intended to be an effective approach for monitoring ephemeral jobs such as those run on AWS Lambda which are otherwise hard/impossible to monitor via one of the other Loki [clients](../).
 
 Ephemeral jobs can quite easily run afoul of cardinality best practices. During high request load, an AWS lambda function might balloon in concurrency, creating many log streams in Cloudwatch. For this reason lambda-promtail defaults to **not** keeping the log stream value as a label when propagating the logs to Loki. This is only possible because new versions of Loki no longer have an ingestion ordering constraint on logs within a single stream.
 
@@ -97,7 +99,9 @@ Ephemeral jobs can quite easily run afoul of cardinality best practices. During 
 
 For those using Cloudwatch and wishing to test out Loki in a low-risk way, this workflow allows piping Cloudwatch logs to Loki regardless of the event source (EC2, Kubernetes, Lambda, ECS, etc) without setting up a set of Promtail daemons across their infrastructure. However, running Promtail as a daemon on your infrastructure is the best-practice deployment strategy in the long term for flexibility, reliability, performance, and cost.
 
-Note: Propagating logs from Cloudwatch to Loki means you'll still need to _pay_ for Cloudwatch.
+{{< admonition type="note" >}}
+Propagating logs from Cloudwatch to Loki means you'll still need to _pay_ for Cloudwatch.
+{{< /admonition >}}
 
 ### VPC Flow logs
 
@@ -107,7 +111,7 @@ One thing to be aware of with this is that the default flow log format doesn't h
 
 ### Loadbalancer logs
 
-This workflow allows ingesting AWS loadbalancer logs stored on S3 to Loki.
+This workflow allows ingesting AWS Application/Network Load Balancer logs stored on S3 to Loki.
 
 ### Cloudtrail logs
 
@@ -124,9 +128,30 @@ For AWS services supporting sending messages to SQS (for example, S3 with an S3 
 ### On-Failure log recovery using SQS
 Triggering lambda-promtail through SQS allows handling on-failure recovery of the logs using a secondary SQS queue as a dead-letter-queue (DLQ). You can configure lambda so that unsuccessfully processed messages will be sent to the DLQ. After fixing the issue, operators will be able to reprocess the messages by sending back messages from the DLQ to the source queue using the [SQS DLQ redrive](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-configure-dead-letter-queue-redrive.html) feature.
 
+### S3 based logging and CloudFormation
+
+Lambda-promtail lets you send logs from different services that use S3 as their logs destination (ALB, VPC Flow, CloudFront access logs, etc.). For this, you need to configure S3 bucket notifications to trigger the lambda-promtail deployment. However, when using CloudFormation to encode infrastructure, there is a [known issue](https://github.com/aws-cloudformation/cloudformation-coverage-roadmap/issues/79) when configuring `AWS::S3::BucketNotification` and the resource that will be triggered by the notification in the same stack.
+
+To manage this issue, AWS introduced [S3 event notifications with Event Bridge](https://aws.amazon.com/blogs/aws/new-use-amazon-s3-event-notifications-with-amazon-eventbridge/). When an object gets created in a S3 bucket, this sends an event to an EventBridge bus, and you can create a rule to send those events to Lambda-promtail.
+
+The diagram below shows how notifications logs will be written from the source service into an S3 bucket. From there on, the S3 bucket will send an `Object created` notification into the EventBridge `default` bus, where we can configure a rule to trigger Lambda Promtail.
+
+{{< figure src="https://grafana.com/media/docs/loki/lambda-promtail-with-eventbridge.png" alt="The diagram shows how notifications logs are written from the source service into an S3 bucket">}}
+
+The [template-eventbridge.yaml](https://github.com/grafana/loki/blob/main/tools/lambda-promtail/template-eventbridge.yaml) CloudFormation template configures Lambda-promtail with EventBridge to address this known issue. To deploy the template, use the snippet below, completing appropriately the `ParameterValue` arguments.
+
+```bash
+aws cloudformation create-stack \
+  --stack-name lambda-promtail-stack \
+  --template-body file://template-eventbridge.yaml \
+  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+  --region us-east-2 \
+  --parameters ParameterKey=WriteAddress,ParameterValue=https://your-loki-url/loki/api/v1/push ParameterKey=Username,ParameterValue=<basic-auth-username> ParameterKey=Password,ParameterValue=<basic-auth-pw> ParameterKey=BearerToken,ParameterValue=<bearer-token> ParameterKey=LambdaPromtailImage,ParameterValue=<ecr-repo>:<tag> ParameterKey=ExtraLabels,ParameterValue="name1,value1,name2,value2" ParameterKey=TenantID,ParameterValue=<value> ParameterKey=SkipTlsVerify,ParameterValue="false" ParameterKey=EventSourceS3Bucket,ParameterValue=<S3 where target logs are stored>
+```
+
 ## Propagated Labels
 
-Incoming logs can have seven special labels assigned to them which can be used in [relabeling]({{< relref "../../clients/promtail/configuration#relabel_configs" >}}) or later stages in a Promtail [pipeline]({{< relref "../../clients/promtail/pipelines" >}}):
+Incoming logs can have seven special labels assigned to them which can be used in [relabeling](../promtail/configuration/#relabel_configs) or later stages in a Promtail [pipeline](../promtail/pipelines/):
 
 - `__aws_log_type`: Where this log came from (Cloudwatch, Kinesis or S3).
 - `__aws_cloudwatch_log_group`: The associated Cloudwatch Log Group for this log.
@@ -136,11 +161,120 @@ Incoming logs can have seven special labels assigned to them which can be used i
 - `__aws_s3_log_lb`: The name of the loadbalancer.
 - `__aws_s3_log_lb_owner`: The Account ID of the loadbalancer owner.
 
+## Relabeling Configuration
+
+Lambda-promtail supports Prometheus-style relabeling through the `RELABEL_CONFIGS` environment variable. This allows you to modify, keep, or drop labels before sending logs to Loki. The configuration is provided as a JSON array of relabel configurations. The relabeling functionality follows the same principles as Prometheus relabeling - for a detailed explanation of how relabeling works, see [How relabeling in Prometheus works](https://grafana.com/blog/2022/03/21/how-relabeling-in-prometheus-works/).
+
+Example configurations:
+
+1. Rename a label and capture regex groups:
+```json
+{
+  "RELABEL_CONFIGS": [
+    {
+      "source_labels": ["__aws_log_type"],
+      "target_label": "log_type",
+      "action": "replace",
+      "regex": "(.*)",
+      "replacement": "${1}"
+    }
+  ]
+}
+```
+
+2. Keep only specific log types (useful for filtering):
+```json
+{
+  "RELABEL_CONFIGS": [
+    {
+      "source_labels": ["__aws_log_type"],
+      "regex": "s3_.*",
+      "action": "keep"
+    }
+  ]
+}
+```
+
+3. Drop internal AWS labels (cleanup):
+```json
+{
+  "RELABEL_CONFIGS": [
+    {
+      "regex": "__aws_.*",
+      "action": "labeldrop"
+    }
+  ]
+}
+```
+
+4. Multiple relabeling rules (combining different actions):
+```json
+{
+  "RELABEL_CONFIGS": [
+    {
+      "source_labels": ["__aws_log_type"],
+      "target_label": "log_type",
+      "action": "replace",
+      "regex": "(.*)",
+      "replacement": "${1}"
+    },
+    {
+      "source_labels": ["__aws_s3_log_lb"],
+      "target_label": "loadbalancer",
+      "action": "replace"
+    },
+    {
+      "regex": "__aws_.*",
+      "action": "labeldrop"
+    }
+  ]
+}
+```
+
+### Supported Actions
+
+The following actions are supported, matching Prometheus relabeling capabilities:
+
+- `replace`: Replace a label value with a new value using regex capture groups
+- `keep`: Keep entries where labels match the regex (useful for filtering)
+- `drop`: Drop entries where labels match the regex (useful for excluding)
+- `hashmod`: Set a label to the modulus of a hash of labels (useful for sharding)
+- `labelmap`: Copy labels to other labels based on regex matching
+- `labeldrop`: Remove labels matching the regex pattern
+- `labelkeep`: Keep only labels matching the regex pattern
+- `lowercase`: Convert label values to lowercase
+- `uppercase`: Convert label values to uppercase
+
+### Configuration Fields
+
+Each relabel configuration supports these fields (all fields are optional except for `action`):
+
+- `source_labels`: List of label names to use as input for the action
+- `separator`: String to join source label values (default: ";")
+- `target_label`: Label to modify (required for replace and hashmod actions)
+- `regex`: Regular expression to match against (defaults to "(.+)" for most actions)
+- `replacement`: Replacement pattern for matched regex, supports ${1}, ${2}, etc. for capture groups
+- `modulus`: Modulus for hashmod action
+- `action`: One of the supported actions listed above
+
+### Important Notes
+
+1. Relabeling is applied after merging extra labels and dropping labels specified by `DROP_LABELS`.
+2. If all labels are removed after relabeling, the log entry will be dropped entirely.
+3. The relabeling configuration follows the same format as Prometheus's relabel_configs, making it familiar for users of Prometheus.
+4. Relabeling rules are processed in order, and each rule can affect the input of subsequent rules.
+5. Regular expressions in the `regex` field support full RE2 syntax.
+6. For the `replace` action, if the `regex` doesn't match, the target label remains unchanged.
+
+For more details about how relabeling works and advanced use cases, refer to the [Prometheus relabeling blog post](https://grafana.com/blog/2022/03/21/how-relabeling-in-prometheus-works/).
+
 ## Limitations
 
 ### Promtail labels
 
-Note: This section is relevant if running Promtail between lambda-promtail and the end Loki deployment and was used to circumvent `out of order` problems prior to the v2.4 Loki release which removed the ordering constraint.
+{{< admonition type="note" >}}
+This section is relevant if running Promtail between lambda-promtail and the end Loki deployment and was used to circumvent `out of order` problems prior to the v2.4 Loki release which removed the ordering constraint.
+{{< /admonition >}}
 
 As stated earlier, this workflow moves the worst case stream cardinality from `number_of_log_streams` -> `number_of_log_groups` * `number_of_promtails`. For this reason, each Promtail must have a unique label attached to logs it processes (ideally via something like `--client.external-labels=promtail=${HOSTNAME}`) and it's advised to run a small number of Promtails behind a load balancer according to your throughput and redundancy needs.
 
@@ -168,7 +302,9 @@ The provided Terraform and CloudFormation files are meant to cover the default u
 
 ## Example Promtail Config
 
-Note: this should be run in conjunction with a Promtail-specific label attached, ideally via a flag argument like `--client.external-labels=promtail=${HOSTNAME}`. It will receive writes via the push-api on ports `3500` (http) and `3600` (grpc).
+{{< admonition type="note" >}}
+This should be run in conjunction with a Promtail-specific label attached, ideally via a flag argument like `--client.external-labels=promtail=${HOSTNAME}`. It will receive writes via the push-api on ports `3500` (http) and `3600` (grpc).
+{{< /admonition >}}
 
 ```yaml
 server:
@@ -212,4 +348,4 @@ Instead we can pipeline Cloudwatch logs to a set of Promtails, which can mitigat
 1) Using Promtail's push api along with the `use_incoming_timestamp: false` config, we let Promtail determine the timestamp based on when it ingests the logs, not the timestamp assigned by cloudwatch. Obviously, this means that we lose the origin timestamp because Promtail now assigns it, but this is a relatively small difference in a real time ingestion system like this.
 2) In conjunction with (1), Promtail can coalesce logs across  Cloudwatch log streams because it's no longer susceptible to out-of-order errors when combining multiple sources (lambda invocations).
 
-One important aspect to keep in mind when running with a set of Promtails behind a load balancer is that we're effectively moving the cardinality problems from the  number of log streams -> number of Promtails. If you have not configured Loki to [accept out-of-order writes]({{< relref "../../configure#accept-out-of-order-writes" >}}), you'll need to assign a Promtail-specific label on each Promtail so that you don't run into out-of-order errors when the Promtails send data for the same log groups to Loki. This can easily be done via a configuration like `--client.external-labels=promtail=${HOSTNAME}` passed to Promtail.
+One important aspect to keep in mind when running with a set of Promtails behind a load balancer is that we're effectively moving the cardinality problems from the  number of log streams -> number of Promtails. If you have not configured Loki to [accept out-of-order writes](https://grafana.com/docs/loki/<LOKI_VERSION>/configure/#accept-out-of-order-writes), you'll need to assign a Promtail-specific label on each Promtail so that you don't run into out-of-order errors when the Promtails send data for the same log groups to Loki. This can easily be done via a configuration like `--client.external-labels=promtail=${HOSTNAME}` passed to Promtail.

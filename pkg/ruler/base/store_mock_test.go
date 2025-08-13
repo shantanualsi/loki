@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/grafana/loki/pkg/ruler/rulespb"
-	"github.com/grafana/loki/pkg/ruler/rulestore"
+	"github.com/grafana/loki/v3/pkg/logproto"
+	"github.com/grafana/loki/v3/pkg/ruler/rulespb"
+	"github.com/grafana/loki/v3/pkg/ruler/rulestore"
 )
 
 type mockRuleStore struct {
@@ -91,6 +92,40 @@ var (
 				},
 				Interval: interval,
 				Limit:    limit,
+			},
+		},
+		"user3": {
+			&rulespb.RuleGroupDesc{
+				Name:      "group1",
+				Namespace: "test",
+				User:      "user3",
+				Rules: []*rulespb.RuleDesc{
+					{
+						Record: "UP_RULE",
+						Expr:   "up",
+					},
+					{
+						Alert: "UP_ALERT",
+						Expr:  "up < 1",
+						Labels: []logproto.LabelAdapter{
+							{
+								Name:  "foo",
+								Value: "bar",
+							},
+						},
+					},
+					{
+						Alert: "DOWN_ALERT",
+						Expr:  "down < 1",
+						Labels: []logproto.LabelAdapter{
+							{
+								Name:  "namespace",
+								Value: "delta",
+							},
+						},
+					},
+				},
+				Interval: interval,
 			},
 		},
 	}

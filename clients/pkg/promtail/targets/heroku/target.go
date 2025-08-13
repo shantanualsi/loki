@@ -8,21 +8,20 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	dslog "github.com/grafana/dskit/log"
 	"github.com/grafana/dskit/server"
 	herokuEncoding "github.com/heroku/x/logplex/encoding"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 
-	"github.com/grafana/loki/clients/pkg/promtail/api"
-	lokiClient "github.com/grafana/loki/clients/pkg/promtail/client"
-	"github.com/grafana/loki/clients/pkg/promtail/scrapeconfig"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/serverutils"
-	"github.com/grafana/loki/clients/pkg/promtail/targets/target"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/api"
+	lokiClient "github.com/grafana/loki/v3/clients/pkg/promtail/client"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/scrapeconfig"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/serverutils"
+	"github.com/grafana/loki/v3/clients/pkg/promtail/targets/target"
 
-	"github.com/grafana/loki/pkg/logproto"
-	util_log "github.com/grafana/loki/pkg/util/log"
+	"github.com/grafana/loki/v3/pkg/logproto"
+	util_log "github.com/grafana/loki/v3/pkg/util/log"
 )
 
 type Target struct {
@@ -69,7 +68,7 @@ func (h *Target) run() error {
 	// To prevent metric collisions because all metrics are going to be registered in the global Prometheus registry.
 
 	tentativeServerMetricNamespace := "promtail_heroku_drain_target_" + h.jobName
-	if !model.IsValidMetricName(model.LabelValue(tentativeServerMetricNamespace)) {
+	if !model.LabelName(tentativeServerMetricNamespace).IsValidLegacy() {
 		return fmt.Errorf("invalid prometheus-compatible job name: %s", h.jobName)
 	}
 	h.config.Server.MetricsNamespace = tentativeServerMetricNamespace
@@ -80,7 +79,7 @@ func (h *Target) run() error {
 	h.config.Server.RegisterInstrumentation = false
 
 	// Wrapping util logger with component-specific key vals, and the expected GoKit logging interface
-	h.config.Server.Log = dslog.GoKit(log.With(util_log.Logger, "component", "heroku_drain"))
+	h.config.Server.Log = log.With(util_log.Logger, "component", "heroku_drain")
 
 	srv, err := server.New(h.config.Server)
 	if err != nil {
@@ -107,7 +106,7 @@ func (h *Target) drain(w http.ResponseWriter, r *http.Request) {
 	for herokuScanner.Scan() {
 		ts := time.Now()
 		message := herokuScanner.Message()
-		lb := labels.NewBuilder(nil)
+		lb := labels.NewBuilder(labels.EmptyLabels())
 		lb.Set("__heroku_drain_host", message.Hostname)
 		lb.Set("__heroku_drain_app", message.Application)
 		lb.Set("__heroku_drain_proc", message.Process)
@@ -133,12 +132,12 @@ func (h *Target) drain(w http.ResponseWriter, r *http.Request) {
 
 		// Start with the set of labels fixed in the configuration
 		filtered := h.Labels().Clone()
-		for _, lbl := range processed {
+		processed.Range(func(lbl labels.Label) {
 			if strings.HasPrefix(lbl.Name, "__") {
-				continue
+				return // (will continue Range loop, not abort)
 			}
 			filtered[model.LabelName(lbl.Name)] = model.LabelValue(lbl.Value)
-		}
+		})
 
 		// Then, inject it as the reserved label, so it's used by the remote write client
 		if tenantIDHeaderValue != "" {
