@@ -286,6 +286,9 @@ Storage config S3
 )
 (omit . "bucketnames" "s3ForcePathStyle" "s3" "endpoint" "region" "secretAccessKey" "accessKeyId" "signatureVersion" "disable_dualstack" "http_config" "backoff_config" "sse")
 | toYaml | nindent 0 }}
+{{- with .s3 }}
+s3: {{ . }}
+{{- end }}
 {{- with .endpoint }}
 endpoint: {{ . }}
 {{- end }}
@@ -372,11 +375,7 @@ chunk_delimiter: {{ . }}
 {{/* Loki ruler config */}}
 {{- define "loki.rulerConfig" }}
 ruler:
-  storage:
-    {{- include "loki.rulerStorageConfig" . | nindent 4}}
-{{- if (not (empty .Values.loki.rulerConfig)) }}
-{{- toYaml .Values.loki.rulerConfig | nindent 2}}
-{{- end }}
+{{- mergeOverwrite (dict "storage" (include "loki.rulerStorageConfig" . | fromYaml)) (.Values.loki.rulerConfig | default dict) | toYaml | nindent 2 }}
 {{- end }}
 
 {{/* Ruler Thanos Storage Config */}}
