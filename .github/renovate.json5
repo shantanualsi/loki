@@ -112,7 +112,6 @@
         "github.com/prometheus/otlptranslator"
       ],
       "enabled": true,
-      "followTag": "main",
       "digest": {
         "enabled": true
       },
