@@ -107,14 +107,17 @@
       "enabled": true
     },
     {
-      // Always use latest commits from specific repositories
       "matchPackageNames": [
         "github.com/prometheus/prometheus",
         "github.com/prometheus/otlptranslator"
       ],
       "enabled": true,
-      "pinDigests": true,
+      "followTag": "main",
+      "digest": {
+        "enabled": true
+      },
       "rangeStrategy": "replace",
+      "respectLatest": false,
       "groupName": "latest-prometheus-deps",
       "automerge": true,
       "autoApprove": true
